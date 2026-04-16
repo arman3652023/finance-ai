@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finance AI - CEO Premium Edition</title>
+    
+    <!-- 라이브러리 로드 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lucide-react@latest"></script>
+    <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
+    
+    <!-- 구글 API -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://apis.google.com/js/api.js" async defer></script>
+
+    <style>
+        body { background-color: #F8FAFC; color: #1E293B; font-family: "Pretendard", sans-serif; margin: 0; overflow: hidden; }
+        .sleek-card { background: white; border: 1px solid #E2E8F0; border-radius: 24px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03); transition: all 0.3s ease; }
+        .sleek-card:hover { transform: translateY(-2px); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); }
+        .sidebar-item { transition: all 0.2s ease; border-radius: 16px; }
+        .sidebar-item.active { background: #2563EB; color: white; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3); }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.5s ease forwards; }
+    </style>
+
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: { 'navy-900': '#0F172A', 'blue-600': '#2563EB' } } }
+        }
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const { 
+            Wallet, ShieldCheck, Edit3, Table, LayoutDashboard, 
+            LogOut, RefreshCw, CheckCircle, TrendingUp, TrendingDown, 
+            Calendar, PieChart, ArrowUpRight, ArrowDownRight, Trash2, Plus
+        } = LucideReact;
+        const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } = Recharts;
+
+        const CLIENT_ID = "810220677734-1va5j5p719qrithbcd4bo1475qqc16ii.apps.googleusercontent.com";
+        const SCOPES = "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file";
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [records, setRecords] = useState([]);
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [syncStatus, setSyncStatus] = useState('idle');
+            const [accessToken, setAccessToken] = useState(null);
+            const [spreadsheetId, setSpreadsheetId] = useState(null);
+
+            // 구글 API 초기화
+            useEffect(() => {
+                const initClient = () => {
+                    window.gapi.load('client', async () => {
+                        try {
+                            await gapi.client.init({ discoveryDocs: ["https://sheets.googleapis.com/$discovery/rest?version=v4"] });
+                        } catch (e) { console.error(e); }
+                    });
+                };
+                const script = document.createElement('script');
+                script.src = "https://apis.google.com/js/api.js";
+                script.onload = initClient;
+                document.head.appendChild(script);
+            }, []);
+
+            const handleLogin = () => {
+                const tokenClient = google.accounts.oauth2.initTokenClient({
+                    client_id: CLIENT_ID,
+                    scope: SCOPES,
+                    callback: async (response) => {
+                        if (response.error) return;
+                        setAccessToken(response.access_token);
+                        const userInfo = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                            headers: { Authorization: `Bearer ${response.access_token}` }
+                        }).then(res => res.json());
+                        setUser({ name: userInfo.name, email: userInfo.email, picture: userInfo.picture });
+                        await initializeSpreadsheet(response.access_token);
+                    },
+                });
+                tokenClient.requestAccessToken();
+            };
+
+            const initializeSpreadsheet = async (token) => {
+                setSyncStatus('syncing');
+                try {
+                    const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=name='Finance_AI_Data' and mimeType='application/vnd.google-apps.spreadsheet'`, {
+                        headers: { Authorization: `Bearer ${token}` }
+                    }).then(res => res.json());
+
+                    let sheetId;
+                    if (searchRes.files && searchRes.files.length > 0) {
+                        sheetId = searchRes.files[0].id;
+                    } else {
+                        const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+                            method: 'POST',
+                            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: 'Finance_AI_Data', mimeType: 'application/vnd.google-apps.spreadsheet' })
+                        }).then(res => res.json());
+                        sheetId = createRes.id;
+                        await updateSheetData(sheetId, [['id', 'category', 'source', 'amount', 'executionDate', 'createdAt']], token);
+                    }
+                    setSpreadsheetId(sheetId);
+                    await loadData(sheetId, token);
+                } catch (err) { setSyncStatus('error'); }
+            };
+
+            const loadData = async (id, token) => {
+                try {
+                    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/Sheet1!A:F`, {
+                        headers: { Authorization: `Bearer ${token}` }
+                    }).then(res => res.json());
+                    if (res.values && res.values.length > 1) {
+                        const headers = res.values[0];
+                        const rows = res.values.slice(1).map(row => {
+                            const obj = {};
+                            headers.forEach((h, i) => obj[h] = row[i]);
+                            return obj;
+                        });
+                        setRecords(rows);
+                    }
+                    setSyncStatus('success');
+                } catch (e) { setSyncStatus('error'); }
+            };
+
+            const updateSheetData = async (id, values, token) => {
+                await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/Sheet1!A1?valueInputOption=RAW`, {
+                    method: 'PUT',
+                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ values })
+                });
+            };
+
+            const syncWithCloud = async (updatedRecords) => {
+                if (!spreadsheetId || !accessToken) return;
+                setSyncStatus('syncing');
+                try {
+                    const headers = ['id', 'category', 'source', 'amount', 'executionDate', 'createdAt'];
+                    const values = [headers, ...updatedRecords.map(r => headers.map(h => r[h]))];
+                    await updateSheetData(spreadsheetId, values, accessToken);
+                    setSyncStatus('success');
+                } catch (e) { setSyncStatus('error'); }
+            };
+
+            const addRecord = (newRecord) => {
+                const updated = [{ id: Date.now().toString(), ...newRecord, createdAt: new Date().toISOString() }, ...records];
+                setRecords(updated);
+                syncWithCloud(updated);
+            };
+
+            const deleteRecord = (id) => {
+                if (!confirm('정말 삭제하시겠습니까?')) return;
+                const updated = records.filter(r => r.id !== id);
+                setRecords(updated);
+                syncWithCloud(updated);
+            };
+
+            // 재무 통계 계산
+            const stats = useMemo(() => {
+                const assets = records.filter(r => r.category === 'ASSET').reduce((sum, r) => sum + Number(r.amount), 0);
+                const liabilities = records.filter(r => r.category === 'LIABILITY').reduce((sum, r) => sum + Number(r.amount), 0);
+                return { assets, liabilities, net: assets - liabilities };
+            }, [records]);
+
+            const chartData = useMemo(() => [
+                { name: '자산 (Assets)', value: stats.assets, color: '#2563EB' },
+                { name: '부채 (Liabilities)', value: stats.liabilities, color: '#F43F5E' }
+            ], [stats]);
+
+            if (!user) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-6">
+                        <div className="max-w-md w-full sleek-card p-12 text-center animate-fade-in">
+                            <div className="w-24 h-24 bg-blue-600 rounded-[32px] flex items-center justify-center mx-auto mb-8 text-white shadow-2xl shadow-blue-200">
+                                <Wallet size={48} />
+                            </div>
+                            <h1 className="text-4xl font-black text-slate-900 mb-2 tracking-tight">Finance AI</h1>
+                            <p className="text-slate-400 mb-12 text-sm font-bold uppercase tracking-widest">기업 재무 리포트</p>
+                            <button 
+                                onClick={handleLogin}
+                                className="w-full bg-white border-2 border-slate-100 py-5 rounded-2xl font-black flex items-center justify-center gap-4 hover:border-blue-600 hover:text-blue-600 transition-all shadow-sm group"
+                            >
+                                <img src="https://www.gstatic.com/images/branding/product/1x/gsa_512dp.png" className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                                Google 계정으로 시작하기
+                            </button>
+                            <p className="mt-8 text-[10px] text-slate-400 uppercase tracking-[0.2em] font-black">Secure Cloud Sync System</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex h-screen bg-[#F8FAFC]">
+                    {/* 사이드바 - AI 스튜디오 다크 모드 스타일 */}
+                    <aside className="w-80 bg-[#0F172A] text-white flex flex-col p-8 shrink-0 shadow-2xl z-20">
+                        <div className="flex items-center gap-4 mb-16 pb-8 border-b border-white/5">
+                            <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-900/20">
+                                <Wallet size={24} />
+                            </div>
+                            <div>
+                                <h1 className="text-xl font-black tracking-tight">FINANCE AI</h1>
+                                <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Premium Edition</p>
+                            </div>
+                        </div>
+                        
+                        <nav className="flex-1 space-y-4">
+                            {[
+                                { id: 'dashboard', label: '대시보드', icon: LayoutDashboard },
+                                { id: 'manual', label: '내역 기록', icon: Edit3 },
+                                { id: 'records', label: '통합 장부', icon: Table }
+                            ].map(item => (
+                                <button 
+                                    key={item.id} 
+                                    onClick={() => setActiveTab(item.id)} 
+                                    className={`sidebar-item flex items-center gap-4 w-full px-6 py-5 text-sm font-black transition-all ${activeTab === item.id ? "active" : "text-slate-500 hover:text-white hover:bg-white/5"}`}
+                                >
+                                    <item.icon size={20} />
+                                    {item.label}
+                                </button>
+                            ))}
+                        </nav>
+
+                        <div className="mt-auto pt-8 border-t border-white/5">
+                            <div className="flex items-center justify-between mb-6 px-2">
+                                <div className="flex items-center gap-3">
+                                    <div className={`w-2 h-2 rounded-full ${syncStatus === 'syncing' ? "bg-amber-400 animate-pulse" : "bg-emerald-400"}`}></div>
+                                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                                        {syncStatus === 'syncing' ? "Syncing..." : "Cloud Connected"}
+                                    </span>
+                                </div>
+                                {syncStatus === 'syncing' && <RefreshCw size={12} className="text-slate-500 animate-spin" />}
+                            </div>
+                            <div className="bg-white/5 rounded-2xl p-4 flex items-center gap-4">
+                                <img src={user.picture} className="w-10 h-10 rounded-xl border border-white/10" />
+                                <div className="flex-1 overflow-hidden">
+                                    <p className="text-xs font-black truncate">{user.name} 대표님</p>
+                                    <p className="text-[9px] text-slate-500 truncate">{user.email}</p>
+                                </div>
+                                <button onClick={() => location.reload()} className="text-slate-500 hover:text-red-400 transition-colors">
+                                    <LogOut size={18} />
+                                </button>
+                            </div>
+                        </div>
+                    </aside>
+
+                    {/* 메인 콘텐츠 */}
+                    <main className="flex-1 flex flex-col overflow-hidden">
+                        <header className="h-24 bg-white/80 backdrop-blur-md border-b border-slate-200 px-12 flex items-center justify-between z-10">
+                            <div className="flex items-center gap-3">
+                                <ShieldCheck size={20} className="text-blue-600" />
+                                <span className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">CEO Secure Workspace</span>
+                            </div>
+                            <div className="flex items-center gap-6">
+                                <div className="h-10 w-[1px] bg-slate-200"></div>
+                                <div className="flex items-center gap-3 text-slate-900">
+                                    <Calendar size={18} className="text-blue-600" />
+                                    <span className="text-sm font-black">{new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
+                                </div>
+                            </div>
+                        </header>
+
+                        <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
+                            {activeTab === 'dashboard' && (
+                                <div className="space-y-12 animate-fade-in">
+                                    {/* 상단 요약 카드 */}
+                                    <div className="grid grid-cols-3 gap-8">
+                                        <div className="sleek-card p-10 bg-slate-900 text-white relative overflow-hidden group">
+                                            <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
+                                                <TrendingUp size={80} />
+                                            </div>
+                                            <p className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-4">Total Assets</p>
+                                            <div className="flex items-baseline gap-2">
+                                                <span className="text-5xl font-black tracking-tighter">{stats.assets.toLocaleString()}</span>
+                                                <span className="text-sm font-bold text-slate-500">KRW</span>
+                                            </div>
+                                            <div className="mt-6 flex items-center gap-2 text-emerald-400 text-xs font-bold">
+                                                <ArrowUpRight size={14} /> <span>자산 현황 정상</span>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="sleek-card p-10 border-l-[12px] border-blue-600">
+                                            <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-4">Total Liabilities</p>
+                                            <div className="flex items-baseline gap-2">
+                                                <span className="text-5xl font-black tracking-tighter text-slate-900">{stats.liabilities.toLocaleString()}</span>
+                                                <span className="text-sm font-bold text-slate-400">KRW</span>
+                                            </div>
+                                            <div className="mt-6 flex items-center gap-2 text-slate-400 text-xs font-bold">
+                                                <ArrowDownRight size={14} /> <span>부채 상환 관리 중</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="sleek-card p-10 bg-blue-50 border border-blue-100">
+                                            <p className="text-[11px] font-black text-blue-600/60 uppercase tracking-widest mb-4">Net Worth</p>
+                                            <div className="flex items-baseline gap-2">
+                                                <span className="text-5xl font-black tracking-tighter text-blue-600">{stats.net.toLocaleString()}</span>
+                                                <span className="text-sm font-bold text-blue-600/40">KRW</span>
+                                            </div>
+                                            <div className="mt-6 flex items-center gap-2 text-blue-600 text-xs font-bold">
+                                                <CheckCircle size={14} /> <span>순자산 가치 분석 완료</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 차트 및 최근 내역 */}
+                                    <div className="grid grid-cols-5 gap-8">
+                                        <div className="col-span-3 sleek-card p-10">
+                                            <div className="flex items-center justify-between mb-10">
+                                                <h3 className="text-lg font-black flex items-center gap-3">
+                                                    <PieChart size={24} className="text-blue-600" /> 자산 대비 부채 비율
+                                                </h3>
+                                            </div>
+                                            <div className="h-[300px] w-full">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart data={chartData} margin={{ top: 20, right: 30, left: 40, bottom: 5 }}>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                                                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 12, fontWeight: 700, fill: '#64748B'}} dy={10} />
+                                                        <YAxis hide />
+                                                        <Tooltip 
+                                                            cursor={{fill: '#F8FAFC'}}
+                                                            contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', padding: '12px 16px'}}
+                                                            itemStyle={{fontWeight: 900}}
+                                                        />
+                                                        <Bar dataKey="value" radius={[12, 12, 12, 12]} barSize={60}>
+                                                            {chartData.map((entry, index) => (
+                                                                <Cell key={`cell-${index}`} fill={entry.color} />
+                                                            ))}
+                                                        </Bar>
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+
+                                        <div className="col-span-2 sleek-card p-10">
+                                            <h3 className="text-lg font-black mb-8 flex items-center gap-3">
+                                                <Calendar size={24} className="text-blue-600" /> 최근 활동
+                                            </h3>
+                                            <div className="space-y-4">
+                                                {records.length === 0 ? (
+                                                    <div className="py-20 text-center text-slate-300 font-bold italic">데이터가 없습니다.</div>
+                                                ) : records.slice(0, 5).map(r => (
+                                                    <div key={r.id} className="flex items-center justify-between p-5 bg-slate-50 rounded-2xl hover:bg-slate-100 transition-colors">
+                                                        <div className="flex items-center gap-4">
+                                                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-sm ${r.category === 'ASSET' ? "bg-blue-600 text-white" : "bg-slate-800 text-white"}`}>
+                                                                {r.category === 'ASSET' ? <TrendingUp size={20}/> : <TrendingDown size={20}/>}
+                                                            </div>
+                                                            <div>
+                                                                <p className="font-black text-slate-900">{r.source}</p>
+                                                                <p className="text-[10px] font-bold text-slate-400 uppercase">{r.executionDate}</p>
+                                                            </div>
+                                                        </div>
+                                                        <p className="font-mono font-black text-slate-900">{Number(r.amount).toLocaleString()}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'manual' && (
+                                <div className="max-w-3xl mx-auto animate-fade-in">
+                                    <div className="sleek-card p-16">
+                                        <div className="flex items-center gap-4 mb-12">
+                                            <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
+                                                <Plus size={28} />
+                                            </div>
+                                            <div>
+                                                <h2 className="text-3xl font-black tracking-tight">신규 내역 기록</h2>
+                                                <p className="text-slate-400 font-bold">재무 변동 사항을 클라우드에 즉시 동기화합니다.</p>
+                                            </div>
+                                        </div>
+                                        
+                                        <form onSubmit={(e) => {
+                                            e.preventDefault();
+                                            const fd = new FormData(e.target);
+                                            addRecord({ category: fd.get('category'), source: fd.get('source'), amount: fd.get('amount'), executionDate: fd.get('date') });
+                                            e.target.reset();
+                                            alert('구글 드라이브에 안전하게 저장되었습니다.');
+                                            setActiveTab('dashboard');
+                                        }} className="grid grid-cols-2 gap-8">
+                                            <div className="col-span-2">
+                                                <label className="block text-[11px] font-black text-slate-400 uppercase tracking-widest mb-3">카테고리 선택</label>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    {['ASSET', 'LIABILITY'].map(type => (
+                                                        <label key={type} className="relative cursor-pointer group">
+                                                            <input type="radio" name="category" value={type} className="peer sr-only" defaultChecked={type === 'ASSET'} />
+                                                            <div className="p-6 border-2 border-slate-100 rounded-2xl font-black text-center transition-all peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-600 group-hover:border-slate-200">
+                                                                {type === 'ASSET' ? "자산 (Asset)" : "부채 (Liability)"}
+                                                            </div>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div className="col-span-2">
+                                                <label className="block text-[11px] font-black text-slate-400 uppercase tracking-widest mb-3">항목 명칭</label>
+                                                <input name="source" type="text" placeholder="예: 삼성전자 주식, 국민은행 대출 등" className="w-full bg-slate-50 border-2 border-transparent rounded-2xl p-5 font-bold outline-none focus:border-blue-600 focus:bg-white transition-all" required />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] font-black text-slate-400 uppercase tracking-widest mb-3">금액 (KRW)</label>
+                                                <input name="amount" type="number" placeholder="0" className="w-full bg-slate-50 border-2 border-transparent rounded-2xl p-5 font-mono font-black outline-none focus:border-blue-600 focus:bg-white transition-all" required />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] font-black text-slate-400 uppercase tracking-widest mb-3">발생 일자</label>
+                                                <input name="date" type="date" className="w-full bg-slate-50 border-2 border-transparent rounded-2xl p-5 font-bold outline-none focus:border-blue-600 focus:bg-white transition-all" defaultValue={new Date().toISOString().split('T')[0]} />
+                                            </div>
+                                            <button type="submit" className="col-span-2 bg-blue-600 text-white py-6 rounded-2xl font-black text-xl shadow-2xl shadow-blue-200 hover:bg-blue-700 hover:scale-[1.01] active:scale-[0.99] transition-all mt-4">
+                                                데이터 클라우드 전송
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'records' && (
+                                <div className="animate-fade-in space-y-8">
+                                    <div className="flex items-center justify-between">
+                                        <h2 className="text-3xl font-black tracking-tight">통합 재무 장부</h2>
+                                        <div className="px-6 py-3 bg-white border border-slate-200 rounded-2xl text-xs font-black text-slate-500 uppercase tracking-widest">
+                                            Total {records.length} Records
+                                        </div>
+                                    </div>
+                                    <div className="sleek-card overflow-hidden">
+                                        <table className="w-full text-left border-collapse">
+                                            <thead>
+                                                <tr className="bg-slate-50/50 border-b border-slate-100">
+                                                    <th className="p-8 text-[11px] font-black text-slate-400 uppercase tracking-widest">상태</th>
+                                                    <th className="p-8 text-[11px] font-black text-slate-400 uppercase tracking-widest">항목 및 일자</th>
+                                                    <th className="p-8 text-[11px] font-black text-slate-400 uppercase tracking-widest text-right">금액 (KRW)</th>
+                                                    <th className="p-8"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-50">
+                                                {records.length === 0 ? (
+                                                    <tr><td colSpan="4" className="p-20 text-center text-slate-300 font-bold italic">장부가 비어있습니다.</td></tr>
+                                                ) : records.map(r => (
+                                                    <tr key={r.id} className="hover:bg-slate-50/80 transition-colors group">
+                                                        <td className="p-8">
+                                                            <span className={`px-4 py-2 rounded-xl text-[10px] font-black tracking-widest ${r.category === 'ASSET' ? "bg-blue-50 text-blue-600" : "bg-slate-900 text-white"}`}>
+                                                                {r.category}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-8">
+                                                            <p className="font-black text-slate-900 text-lg">{r.source}</p>
+                                                            <p className="text-xs font-bold text-slate-400 mt-1">{r.executionDate}</p>
+                                                        </td>
+                                                        <td className="p-8 font-mono font-black text-2xl text-right text-slate-900">
+                                                            {Number(r.amount).toLocaleString()}
+                                                        </td>
+                                                        <td className="p-8 text-right">
+                                                            <button 
+                                                                onClick={() => deleteRecord(r.id)} 
+                                                                className="w-12 h-12 rounded-xl flex items-center justify-center text-slate-200 hover:text-red-500 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100"
+                                                            >
+                                                                <Trash2 size={20}/>
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
